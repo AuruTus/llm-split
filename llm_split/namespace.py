@@ -1,8 +1,17 @@
+import sys
 import ast
-from typing import Any
+from typing import Any, Self
 
 
-class Namespace:
+class NameSpace:
+    @staticmethod
+    def namespace_of(class_typ: type) -> Self:
+        return NameSpace(
+            namespace=vars(sys.modules[class_typ.__module__]),
+            filename=f"<{class_typ.__name__}_ast_modified>",
+            mode="exec",
+        )
+
     def __init__(
         self,
         namespace: dict[str, Any],
