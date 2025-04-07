@@ -74,7 +74,7 @@ class ASTGraph:
     def add_node(self, nodes: list[Node]):
         for i, node in enumerate(nodes):
             prev_nodes = self.nodes[node.meta.name]
-            if not prev_nodes or prev_nodes[-1].meta.ctx == ast.Load() and node.meta.ctx == ast.Store():
+            if not prev_nodes or node.meta.ctx == ast.Store():
                 prev_nodes.append(node)
                 return
             nodes[i] = prev_nodes[-1]
