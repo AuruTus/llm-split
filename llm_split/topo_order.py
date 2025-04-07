@@ -8,23 +8,50 @@ from contextlib import contextmanager
 
 
 VAR_TYPE = Union[ast.Name, ast.Attribute, ast.Subscript]
-
+CTX_TYPE = Union[ast.Load, ast.Store, ast.Del]
+IF_PLACEHOLDER = "<if_placeholder>"
+WITH_PLACEHOLDER = "<with_placeholder>"
 
 @dataclass
 class NodeMeta:
     nd_in: list[str]  # names of nodes on which this node depends
     nd_out: list[str]  # names of nodes to which this node gives dependency
     name: str
+    ctx: CTX_TYPE
 
 
 @dataclass
 class Node:
     meta: NodeMeta
-    node: VAR_TYPE
+    ast_node: VAR_TYPE
 
     @staticmethod
-    def new(ast_node: VAR_TYPE):
-        return Node(NodeMeta(nd_in=[], nd_out=[], name=Node.attr_name(ast_node)), ast_node)
+    def new(ast_node: VAR_TYPE) -> "Node":
+        return Node(
+            NodeMeta(
+                nd_in=[],
+                nd_out=[],
+                name=Node.attr_name(ast_node),
+                ctx=ast_node.ctx,
+            ),
+            ast_node,
+        )
+
+    @staticmethod
+    def new_if(if_node: ast.If) -> "Node":
+        return Node(
+            NodeMeta(
+                nd_in=[],
+                nd_out=[],
+                name=IF_PLACEHOLDER,
+                ctx=ast.Store(),
+            ),
+            if_node,
+        )
+
+    @staticmethod
+    def new_with(with_node: ast.With) -> "Node":
+        return Node(NodeMeta(nd_in=[], nd_out=[], name=WITH_PLACEHOLDER), with_node)
 
     @staticmethod
     def attr_name(attr: VAR_TYPE):
@@ -42,23 +69,30 @@ class Node:
 
 class ASTGraph:
     def __init__(self):
-        self.nodes: Dict[str, Node] = {}
+        self.nodes: Dict[str, list[Node]] = defaultdict(list)
 
-    def add_node(self, node: Node):
-        self.nodes[node.meta.name] = node
+    def add_node(self, nodes: list[Node]):
+        for i, node in enumerate(nodes):
+            prev_nodes = self.nodes[node.meta.name]
+            if not prev_nodes or prev_nodes[-1].meta.ctx == ast.Load() and node.meta.ctx == ast.Store():
+                prev_nodes.append(node)
+                return
+            nodes[i] = prev_nodes[-1]
+            nodes[i].meta.ctx = node.meta.ctx
 
     def add_edge(self, from_node: str, to_node: str):
+        raise NotImplementedError("ASTGraph.add_edge: not implemented")
         self.nodes[from_node].meta.nd_out.append(to_node)
         self.nodes[to_node].meta.nd_in.append(from_node)
 
 
 class TopoGraphBuilder(ast.NodeVisitor):
     graph: ASTGraph
-    current_targets: list[Node]
+    current_targets: Optional[list[Node]]
 
     def __init__(self):
         self.graph = ASTGraph()
-        self.current_targets = []
+        self.current_targets = None
 
     def visit_Name(self, node: ast.Name):
         """
@@ -90,24 +124,22 @@ class TopoGraphBuilder(ast.NodeVisitor):
             for target in node.targets:
                 self._collect_targets(target)
             for target in self.current_targets:
-                if target.meta.name not in self.graph.nodes:
-                    self.graph.add_node(target.meta.name, target.node)
-                else:
-                    target = self.graph.nodes[target.meta.name]
+                self.graph.add_node(target)
             self.visit(node.value)
 
     def visit_AugAssign(self, node: ast.AugAssign):
         with self._visit_context():
             self._collect_targets(node.target)
             for target in self.current_targets:
-                if target.meta.name not in self.graph.nodes:
-                    self.graph.add_node(target.meta.name, target.node)
-                else:
-                    target = self.graph.nodes[target.meta.name]
+                self.graph.add_node(target)
             self.visit(node.value)
 
-    def visit_AnnAssign(self, node):
-        raise NotImplementedError("TopoGraphBuilder.visit_AnnAssign: not implemented node type: ast.AnnAssign")
+    def visit_AnnAssign(self, node: ast.AnnAssign):
+        with self._visit_context():
+            self._collect_targets(node.target)
+            for target in self.current_targets:
+                self.graph.add_node(target)
+            self.visit(node.value)
 
     def visit_For(self, node):
         raise NotImplementedError("TopoGraphBuilder.visit_For: not implemented node type: ast.For")
