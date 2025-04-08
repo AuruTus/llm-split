@@ -1,6 +1,6 @@
 import ast
 from typing import Union
-
+from llm_split.namespace import NameSpace
 
 VAR_TYPE = Union[ast.Name, ast.Attribute]
 
@@ -80,6 +80,37 @@ class VariableVisitor(ast.NodeVisitor):
         # Then visit the target (left-hand side) to handle writes
         self.visit(node.target)
 
+    def visit_GeneratorExp(self, node: ast.GeneratorExp):
+        # Visit all comprehensions first to process assignment targets
+        for gen in node.generators:
+            self.visit(gen)
+        # Visit the element expression
+        self.visit(node.elt)
+
+    def visit_comprehension(self, node: ast.comprehension):
+        # Visit the target in Store context (crucial for assignment tracking)
+        if isinstance(node.target, ast.Name):
+            # Create a pseudo Assign node to trigger assignment tracking
+            mock_assign = ast.Assign(targets=[ast.Name(id=node.target.id, ctx=ast.Store())], value=ast.Constant(value=None))
+            self.visit_Assign(mock_assign)
+        else:
+            # Handle tuple unpacking etc.
+            self.visit(node.target)
+
+        # Visit iterable and conditions
+        self.visit(node.iter)
+        for cond in node.ifs:
+            self.visit(cond)
+
+    def visit_DictComp(self, node: ast.DictComp):
+        self.generic_visit(node)
+
+    def visit_ListComp(self, node: ast.ListComp):
+        self.generic_visit(node)
+
+    def visit_SetComp(self, node: ast.SetComp):
+        self.generic_visit(node)
+
     def visit_NamedExpr(self, node: ast.NamedExpr):
         self.visit(node.value)  # Read first (RHS)
         self.visit(node.target)  # Write after (LHS)
@@ -96,3 +127,83 @@ class VariableVisitor(ast.NodeVisitor):
     def visit_Nonlocal(self, node: ast.Nonlocal):
         for name in node.names:
             self.current_scope.add(name)
+
+class AttrFilter:
+    def __init__(self, func_vars: set[str]):
+        self._func_vars = func_vars
+        self._self_attr: set[str] = set()
+        self._var: set[str] = set()
+
+        self._filter()
+
+    def _filter(self):
+        for var in self._func_vars:
+            if var.startswith("self."):
+                attr = var.split(".")
+                attr = ".".join(attr[:2])
+                self._self_attr.add(attr)
+            elif "." in var:
+                attr = var.split(".")[0]
+                self._var.add(attr)
+            else:
+                self._var.add(var)
+
+    @property
+    def self_attr(self) -> set[str]:
+        return sorted(self._self_attr)
+
+    @property
+    def var(self) -> set[str]:
+        return sorted(self._var)
+
+
+class GlobalVarFilter:
+    def __init__(self, func_vars: set[str], namespace: NameSpace):
+        self._namespace = namespace
+        self._func_vars = func_vars
+        self._global_var: set[str] = set()
+        self._var: set[str] = set()
+
+        self._filter()
+
+    def _filter(self):
+        for var in self._func_vars:
+            if hasattr(self._namespace, var):
+                self._global_var.add(var)
+                continue
+            self._var.add(var)
+
+    @property
+    def global_var(self) -> set[str]:
+        return sorted(self._global_var)
+
+    @property
+    def var(self):
+        return sorted(self._var)
+
+
+class BasicTypeFilter:
+    def __init__(self, func_vars: set[str]):
+        self._func_vars = func_vars
+        self._basic_type: set[str] = set()
+        self._var: set[str] = set()
+
+        self._filter()
+
+    def _filter(self):
+        import builtins
+
+        builtin_namespace = dir(builtins)
+        for var in self._func_vars:
+            if var in builtin_namespace:
+                self._basic_type.add(var)
+                continue
+            self._var.add(var)
+
+    @property
+    def var(self) -> set[str]:
+        return sorted(self._var)
+
+    @property
+    def basic_type(self) -> set[str]:
+        return sorted(self._basic_type)
