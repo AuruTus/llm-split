@@ -1,6 +1,7 @@
 import ast
 from typing import Union
 
+
 VAR_TYPE = Union[ast.Name, ast.Attribute]
 
 
@@ -72,7 +73,10 @@ class VariableVisitor(ast.NodeVisitor):
 
     def visit_AugAssign(self, node: ast.AugAssign):
         # Visit the value (right-hand side) first to handle reads
+        node.target.ctx = ast.Load()  # Temporarily change context to Load
         self.visit(node.value)
+        self.visit(node.target)
+        node.target.ctx = ast.Store()
         # Then visit the target (left-hand side) to handle writes
         self.visit(node.target)
 
