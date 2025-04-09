@@ -53,6 +53,11 @@ class VariableVisitor(ast.NodeVisitor):
 
     def visit_Attribute(self, node: ast.Attribute):
         node_name = var_name(node)
+        name = node_name.split(".")
+        if node_name.startswith("self."):
+            node_name = ".".join(name[:2])
+        else:
+            node_name = name[0]
         match node.ctx:
             case ast.Load():
                 if node_name in self.current_scope:
@@ -128,7 +133,7 @@ class VariableVisitor(ast.NodeVisitor):
         for name in node.names:
             self.current_scope.add(name)
 
-class AttrFilter:
+class SelfAttrFilter:
     def __init__(self, func_vars: set[str]):
         self._func_vars = func_vars
         self._self_attr: set[str] = set()
@@ -139,12 +144,7 @@ class AttrFilter:
     def _filter(self):
         for var in self._func_vars:
             if var.startswith("self."):
-                attr = var.split(".")
-                attr = ".".join(attr[:2])
-                self._self_attr.add(attr)
-            elif "." in var:
-                attr = var.split(".")[0]
-                self._var.add(attr)
+                self._self_attr.add(var)
             else:
                 self._var.add(var)
 
