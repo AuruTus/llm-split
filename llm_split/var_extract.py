@@ -242,14 +242,16 @@ class filter:
 
     usage example:
     ```
-        filter(visitor).by([some filter classes...])
+        filter(variables set).by([some filter classes...])
     ```
     """
+
+    _FILTER_CLASS = Union[type[FilterBase], Callable[[set[str]], None]]
 
     def __init__(self, vars: set[str]):
         self._init_vars = vars
 
-    def by(self, filters: list[Union[type[FilterBase], Callable[[set[str]], None]]]) -> list[str]:
+    def by(self, filters: list[_FILTER_CLASS]) -> list[str]:
         var = self._init_vars
         for f in filters[:-1]:
             var = f(var).res()
