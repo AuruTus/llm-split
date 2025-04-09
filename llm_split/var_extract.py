@@ -1,5 +1,7 @@
 import ast
-from typing import Union
+from abc import ABC, abstractmethod
+from functools import partial
+from typing import Union, Type, Callable
 from llm_split.namespace import NameSpace
 
 VAR_TYPE = Union[ast.Name, ast.Attribute]
@@ -133,7 +135,23 @@ class VariableVisitor(ast.NodeVisitor):
         for name in node.names:
             self.current_scope.add(name)
 
-class SelfAttrFilter:
+
+class FilterBase(ABC):
+    @abstractmethod
+    def _filter(self):
+        pass
+
+    @abstractmethod
+    def res(self) -> set[str]:
+        pass
+
+    @property
+    @abstractmethod
+    def var_list(self) -> list[str]:
+        pass
+
+
+class SelfAttrFilter(FilterBase):
     def __init__(self, func_vars: set[str]):
         self._func_vars = func_vars
         self._self_attr: set[str] = set()
@@ -148,16 +166,19 @@ class SelfAttrFilter:
             else:
                 self._var.add(var)
 
+    def res(self) -> set[str]:
+        return self._var
+
     @property
-    def self_attr(self) -> set[str]:
+    def self_attr_list(self) -> list[str]:
         return sorted(self._self_attr)
 
     @property
-    def var(self) -> set[str]:
+    def var_list(self) -> list[str]:
         return sorted(self._var)
 
 
-class GlobalVarFilter:
+class GlobalVarFilter(FilterBase):
     def __init__(self, func_vars: set[str], namespace: NameSpace):
         self._namespace = namespace
         self._func_vars = func_vars
@@ -173,16 +194,19 @@ class GlobalVarFilter:
                 continue
             self._var.add(var)
 
+    def res(self) -> set[str]:
+        return self._var
+
     @property
-    def global_var(self) -> set[str]:
+    def global_var_list(self) -> set[str]:
         return sorted(self._global_var)
 
     @property
-    def var(self):
+    def var_list(self) -> list[str]:
         return sorted(self._var)
 
 
-class BasicTypeFilter:
+class BasicTypeFilter(FilterBase):
     def __init__(self, func_vars: set[str]):
         self._func_vars = func_vars
         self._basic_type: set[str] = set()
@@ -200,10 +224,43 @@ class BasicTypeFilter:
                 continue
             self._var.add(var)
 
+    def res(self) -> set[str]:
+        return self._var
+
     @property
-    def var(self) -> set[str]:
+    def var_list(self) -> list[str]:
         return sorted(self._var)
 
     @property
-    def basic_type(self) -> set[str]:
+    def basic_type_list(self) -> list[str]:
         return sorted(self._basic_type)
+
+
+class filter:
+    """
+    It works as a function to combine fileters walking through a set of var name strings.
+
+    usage example:
+    ```
+        filter(visitor).by([some filter classes...])
+    ```
+    """
+
+    def __init__(self, vars: set[str]):
+        self._init_vars = vars
+
+    def by(self, filters: list[Union[type[FilterBase], Callable[[set[str]], None]]]) -> list[str]:
+        var = self._init_vars
+        for f in filters[:-1]:
+            var = f(var).res()
+        return filters[-1](var).var_list
+
+
+def extract_input_args(visitor: VariableVisitor, src_class: type) -> list[str]:
+    return filter(visitor.read_before_assigned).by(
+        [
+            SelfAttrFilter,
+            partial(GlobalVarFilter, namespace=NameSpace.namespace_of(src_class)),
+            BasicTypeFilter,
+        ],
+    )
